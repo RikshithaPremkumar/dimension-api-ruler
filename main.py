@@ -1,18 +1,14 @@
+# main.py
 from fastapi import FastAPI, File, UploadFile
 import cv2
 import numpy as np
 import shutil
+import uvicorn
 import uuid
 import os
 from fastapi.responses import JSONResponse
 
 app = FastAPI()
-
-@app.get("/")
-async def root():
-    return {
-        "message": "Dimension API is running! Use POST /analyze/ with a 10cm ruler in the image to detect objects and get dimensions in cm."
-    }
 
 def classify_shape(approx):
     sides = len(approx)
@@ -23,21 +19,12 @@ def classify_shape(approx):
     else:
         return "rod"
 
-def calculate_dimensions(contour, pixels_per_cm):
+def calculate_dimensions(contour, scale_factor):
     x, y, w, h = cv2.boundingRect(contour)
-    length = max(w, h) / pixels_per_cm
-    width = min(w, h) / pixels_per_cm
-    breadth = "N/A" 
+    length = max(w, h) * scale_factor
+    width = min(w, h) * scale_factor
+    breadth = 0.4 
     return round(length, 2), round(width, 2), breadth
-
-def detect_ruler(contours):
-    for cnt in contours:
-        x, y, w, h = cv2.boundingRect(cnt)
-        aspect_ratio = max(w, h) / min(w, h) if min(w, h) != 0 else 0
-        area = cv2.contourArea(cnt)
-        if 9 < aspect_ratio < 13 and area > 5000:
-            return max(w, h)
-    return None
 
 @app.post("/analyze/")
 async def analyze_image(file: UploadFile = File(...)):
@@ -53,25 +40,15 @@ async def analyze_image(file: UploadFile = File(...)):
     edged = cv2.Canny(blur, 50, 200)
 
     contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    ruler_length_px = detect_ruler(contours)
-    if not ruler_length_px:
-        return JSONResponse({"error": "10 cm ruler not detected. Please include a reference object."}, status_code=400)
-
-    pixels_per_cm = ruler_length_px / 10.0
+    scale_factor = 1 / 100.0
 
     results = []
     type_count = {}
 
     for cnt in contours:
-        if cv2.contourArea(cnt) < 500:
-            continue
-        if cnt is not None and detect_ruler([cnt]) == ruler_length_px:
-            continue 
-
         approx = cv2.approxPolyDP(cnt, 0.02*cv2.arcLength(cnt, True), True)
         shape = classify_shape(approx)
-        length, width, breadth = calculate_dimensions(cnt, pixels_per_cm)
+        length, width, breadth = calculate_dimensions(cnt, scale_factor)
 
         results.append({
             "type": shape,
@@ -92,3 +69,6 @@ async def analyze_image(file: UploadFile = File(...)):
         "object_types": type_count,
         "dimensions_cm": results
     })
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000)
