@@ -33,7 +33,7 @@ def detect_ruler(contours):
             return max(w, h)
     return None
 
-@app.post("/analyze/")
+@app.post("/")
 async def analyze_image(file: UploadFile = File(...)):
     img_id = str(uuid.uuid4())
     img_path = f"{img_id}.jpg"
