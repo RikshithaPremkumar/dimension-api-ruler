@@ -8,6 +8,12 @@ from fastapi.responses import JSONResponse
 
 app = FastAPI()
 
+@app.get("/")
+async def root():
+    return {
+        "message": "Dimension API is running! Use POST /analyze/ with a 10cm ruler in the image to detect objects and get dimensions in cm."
+    }
+
 def classify_shape(approx):
     sides = len(approx)
     if sides <= 5:
@@ -21,7 +27,7 @@ def calculate_dimensions(contour, pixels_per_cm):
     x, y, w, h = cv2.boundingRect(contour)
     length = max(w, h) / pixels_per_cm
     width = min(w, h) / pixels_per_cm
-    breadth = 0.4 
+    breadth = "N/A" 
     return round(length, 2), round(width, 2), breadth
 
 def detect_ruler(contours):
@@ -33,7 +39,7 @@ def detect_ruler(contours):
             return max(w, h)
     return None
 
-@app.post("/")
+@app.post("/analyze/")
 async def analyze_image(file: UploadFile = File(...)):
     img_id = str(uuid.uuid4())
     img_path = f"{img_id}.jpg"
