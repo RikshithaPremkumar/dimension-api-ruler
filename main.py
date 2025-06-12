@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import uuid
 import os
+from collections import Counter
 
 app = FastAPI()
 
@@ -18,8 +19,11 @@ app.add_middleware(
 @app.get("/")
 async def root():
     return {
-        "message": "Upload any image with visible objects to get their dimensions in pixels."
+        "message": "Upload an image with visible objects. Dimensions are returned in centimeters (cm) using estimated scaling."
     }
+
+# Constants
+PIXELS_PER_CM = 37.8  # Approximation assuming 96 DPI (96px = 2.54cm)
 
 def classify_shape(approx):
     sides = len(approx)
@@ -30,9 +34,11 @@ def classify_shape(approx):
     else:
         return "rod"
 
-def calculate_dimensions(contour):
+def calculate_dimensions_in_cm(contour):
     x, y, w, h = cv2.boundingRect(contour)
-    return w, h  # in pixels
+    width_cm = round(w / PIXELS_PER_CM, 2)
+    height_cm = round(h / PIXELS_PER_CM, 2)
+    return width_cm, height_cm
 
 @app.post("/analyze/")
 async def analyze_image(file: UploadFile = File(...)):
@@ -48,21 +54,31 @@ async def analyze_image(file: UploadFile = File(...)):
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    edged = cv2.Canny(blurred, 50, 150)
+    edged = cv2.Canny(blurred, 20, 100)
+    edged = cv2.dilate(edged, None, iterations=1)
 
     contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     detected = []
+    shape_list = []
+
     for contour in contours:
-        if cv2.contourArea(contour) < 1000:
+        if cv2.contourArea(contour) < 200:
             continue
         approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
         shape = classify_shape(approx)
-        width_px, height_px = calculate_dimensions(contour)
+        width_cm, height_cm = calculate_dimensions_in_cm(contour)
+
         detected.append({
             "shape": shape,
-            "width_px": width_px,
-            "height_px": height_px
+            "width_cm": width_cm,
+            "height_cm": height_cm
         })
+        shape_list.append(shape)
 
-    return {"detected_objects": detected or []}
+    shape_count = dict(Counter(shape_list))
+    return {
+        "total_object_count": len(detected),
+        "object_type_count": shape_count,
+        "detected_objects": detected
+    }
