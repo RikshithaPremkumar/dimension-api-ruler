@@ -1,11 +1,12 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, File, UploadFile, Form
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import cv2
 import numpy as np
 import uuid
 import os
 from collections import Counter
+from typing import List
 
 app = FastAPI()
 
@@ -16,11 +17,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-async def root():
-    return {
-        "message": "Upload an image with visible objects. Dimensions are returned in centimeters (cm) using estimated scaling."
-    }
 PIXELS_PER_CM = 37.8  
 
 def classify_shape(approx):
@@ -38,7 +34,24 @@ def calculate_dimensions_in_cm(contour):
     height_cm = round(h / PIXELS_PER_CM, 2)
     return width_cm, height_cm
 
-@app.post("/analyze/")
+@app.get("/", response_class=HTMLResponse)
+async def upload_form():
+    return """
+    <html>
+        <head>
+            <title>Object Dimension Detector</title>
+        </head>
+        <body>
+            <h2>Upload an Image to Detect Object Dimensions (in cm)</h2>
+            <form action="/analyze/" enctype="multipart/form-data" method="post">
+                <input name="file" type="file" accept="image/*">
+                <input type="submit" value="Upload and Analyze">
+            </form>
+        </body>
+    </html>
+    """
+
+@app.post("/analyze/", response_class=HTMLResponse)
 async def analyze_image(file: UploadFile = File(...)):
     temp_filename = f"temp_{uuid.uuid4()}.jpg"
     with open(temp_filename, "wb") as buffer:
@@ -48,7 +61,7 @@ async def analyze_image(file: UploadFile = File(...)):
     os.remove(temp_filename)
 
     if image is None:
-        return JSONResponse(status_code=400, content={"error": "Invalid image file"})
+        return HTMLResponse(content="<h3>Error: Invalid image file.</h3>", status_code=400)
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (7, 7), 0)
@@ -75,8 +88,21 @@ async def analyze_image(file: UploadFile = File(...)):
         shape_list.append(shape)
 
     shape_count = dict(Counter(shape_list))
-    return {
-        "total_object_count": len(detected),
-        "object_type_count": shape_count,
-        "detected_objects": detected
-    }
+    total_objects = len(detected)
+
+    result_html = f"<h2>Total Objects Detected: {total_objects}</h2>"
+    result_html += "<h3>Type-wise Count:</h3><ul>"
+    for shape, count in shape_count.items():
+        result_html += f"<li>{shape}: {count}</li>"
+    result_html += "</ul>"
+
+    result_html += "<h3>Object Details:</h3><ol>"
+    for obj in detected:
+        result_html += (
+            f"<li>Shape: {obj['shape']}, Width: {obj['width_cm']} cm, Height: {obj['height_cm']} cm</li>"
+        )
+    result_html += "</ol>"
+
+    result_html += '<a href="/">&#8592; Upload another image</a>'
+
+    return HTMLResponse(content=result_html)
