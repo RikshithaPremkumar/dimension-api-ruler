@@ -16,7 +16,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Estimated pixels per cm (based on 96 DPI screens)
 PIXELS_PER_CM = 37.8
 
 def classify_shape(approx):
@@ -38,9 +37,9 @@ def calculate_dimensions(contour):
 async def index():
     return """
     <html>
-        <head><title>Universal Object Detector</title></head>
+        <head><title>Object Detector</title></head>
         <body>
-            <h2>Upload an image (with 1 or more objects)</h2>
+            <h2>Upload an image to detect all objects and get measurements in cm</h2>
             <form action="/analyze/" enctype="multipart/form-data" method="post">
                 <input name="file" type="file" accept="image/*" required>
                 <input type="submit" value="Analyze">
@@ -51,43 +50,38 @@ async def index():
 
 @app.post("/analyze/", response_class=HTMLResponse)
 async def analyze(file: UploadFile = File(...)):
-    filename = f"temp_{uuid.uuid4()}.jpg"
-    with open(filename, "wb") as f:
+    temp_file = f"temp_{uuid.uuid4()}.jpg"
+    with open(temp_file, "wb") as f:
         f.write(await file.read())
 
-    image = cv2.imread(filename)
-    os.remove(filename)
+    image = cv2.imread(temp_file)
+    os.remove(temp_file)
 
     if image is None:
-        return HTMLResponse("<h3>Error: Invalid image uploaded.</h3>", status_code=400)
+        return HTMLResponse("<h3>Error: Invalid image file.</h3>", status_code=400)
 
-    # Preprocess image
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray)  # enhance contrast
+    gray = cv2.equalizeHist(gray)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 5, 90)
+    edged = cv2.dilate(edged, None, iterations=3)
 
-    # Robust edge detection
-    edged = cv2.Canny(blurred, 5, 70)
-    edged = cv2.dilate(edged, None, iterations=2)
-
-    # Get contours
-    contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     detected = []
-    shape_counts = []
+    shape_list = []
 
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < 60:  # Accept very small objects too
+        if area < 50:
             continue
 
         width_cm, height_cm, x, y, w, h = calculate_dimensions(contour)
-        aspect_ratio = w / h if h > 0 else 0
 
-        if aspect_ratio > 200 or aspect_ratio < 0.01:
-            continue  # ignore super-thin lines
+        if width_cm < 0.2 or height_cm < 0.2:
+            continue
 
-        approx = cv2.approxPolyDP(contour, 0.01 * cv2.arcLength(contour, True), True)
+        approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
         shape = classify_shape(approx)
 
         detected.append({
@@ -95,18 +89,17 @@ async def analyze(file: UploadFile = File(...)):
             "width_cm": width_cm,
             "height_cm": height_cm
         })
-        shape_counts.append(shape)
+        shape_list.append(shape)
 
-    type_count = dict(Counter(shape_counts))
+    shape_counts = dict(Counter(shape_list))
 
-    # Generate HTML output
     html = f"<h2>Total Objects Detected: {len(detected)}</h2>"
     html += "<h3>Type-wise Count:</h3><ul>"
-    for shape, count in type_count.items():
-        html += f"<li>{shape}: {count}</li>"
+    for k, v in shape_counts.items():
+        html += f"<li>{k}: {v}</li>"
     html += "</ul><h3>Object Details:</h3><ol>"
     for obj in detected:
         html += f"<li>Shape: {obj['shape']}, Width: {obj['width_cm']} cm, Height: {obj['height_cm']} cm</li>"
     html += "</ol><a href='/'>← Upload another image</a>"
 
-    return HTMLResponse(content=html)
+    return HTMLResponse(html)
