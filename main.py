@@ -34,12 +34,12 @@ def calculate_dimensions(contour):
     return width_cm, height_cm, x, y, w, h
 
 @app.get("/", response_class=HTMLResponse)
-async def form():
+async def home():
     return """
     <html>
         <head><title>Object Dimension Detector</title></head>
         <body>
-            <h2>Upload an Image to Detect Objects (in cm)</h2>
+            <h2>Upload an Image to Detect and Measure an Object (in cm)</h2>
             <form action="/analyze/" enctype="multipart/form-data" method="post">
                 <input type="file" name="file" accept="image/*" required>
                 <input type="submit" value="Analyze">
@@ -61,10 +61,12 @@ async def analyze(file: UploadFile = File(...)):
         return HTMLResponse("<h3>Invalid image file.</h3>", status_code=400)
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    edged = cv2.Canny(blurred, 20, 100)
-    edged = cv2.dilate(edged, None, iterations=1)
+    gray = cv2.equalizeHist(gray) 
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    edged = cv2.Canny(blurred, 10, 80)  
+    edged = cv2.dilate(edged, None, iterations=2)
 
+    # Get only outermost contours
     contours, _ = cv2.findContours(edged.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     detected = []
@@ -72,20 +74,18 @@ async def analyze(file: UploadFile = File(...)):
 
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < 500:  # Skip tiny areas
+        if area < 150:  # Allow smaller objects now
             continue
 
         width_cm, height_cm, x, y, w, h = calculate_dimensions(contour)
 
-        # Filter out flat lines like ruler or long shadows
         aspect_ratio = w / h if h != 0 else 0
-        if aspect_ratio > 10 or aspect_ratio < 0.1:
-            continue
-        if y < image.shape[0] * 0.15:
+        if aspect_ratio > 30 or aspect_ratio < 0.1:  
             continue
 
         approx = cv2.approxPolyDP(contour, 0.02 * cv2.arcLength(contour, True), True)
         shape = classify_shape(approx)
+
         detected.append({
             "shape": shape,
             "width_cm": width_cm,
@@ -93,16 +93,15 @@ async def analyze(file: UploadFile = File(...)):
         })
         shape_list.append(shape)
 
-    shape_count = dict(Counter(shape_list))
+    type_count = dict(Counter(shape_list))
 
     html = f"<h2>Total Objects Detected: {len(detected)}</h2>"
     html += "<h3>Type-wise Count:</h3><ul>"
-    for k, v in shape_count.items():
+    for k, v in type_count.items():
         html += f"<li>{k}: {v}</li>"
     html += "</ul><h3>Object Details:</h3><ol>"
-
     for obj in detected:
         html += f"<li>Shape: {obj['shape']}, Width: {obj['width_cm']} cm, Height: {obj['height_cm']} cm</li>"
-
     html += "</ol><a href='/'>← Upload another image</a>"
+
     return HTMLResponse(html)
