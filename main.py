@@ -16,6 +16,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Estimated pixels per cm (based on 96 DPI screens)
 PIXELS_PER_CM = 37.8
 
 def classify_shape(approx):
@@ -62,10 +63,14 @@ async def analyze(file: UploadFile = File(...)):
 
     # Preprocess image
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    gray = cv2.equalizeHist(gray) 
+    gray = cv2.equalizeHist(gray)  # enhance contrast
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Robust edge detection
     edged = cv2.Canny(blurred, 5, 70)
     edged = cv2.dilate(edged, None, iterations=2)
+
+    # Get contours
     contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     detected = []
@@ -73,14 +78,14 @@ async def analyze(file: UploadFile = File(...)):
 
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < 60: 
+        if area < 60:  # Accept very small objects too
             continue
 
         width_cm, height_cm, x, y, w, h = calculate_dimensions(contour)
         aspect_ratio = w / h if h > 0 else 0
 
         if aspect_ratio > 200 or aspect_ratio < 0.01:
-            continue  
+            continue  # ignore super-thin lines
 
         approx = cv2.approxPolyDP(contour, 0.01 * cv2.arcLength(contour, True), True)
         shape = classify_shape(approx)
@@ -92,4 +97,16 @@ async def analyze(file: UploadFile = File(...)):
         })
         shape_counts.append(shape)
 
-    type_count = dict(Counter(_
+    type_count = dict(Counter(shape_counts))
+
+    # Generate HTML output
+    html = f"<h2>Total Objects Detected: {len(detected)}</h2>"
+    html += "<h3>Type-wise Count:</h3><ul>"
+    for shape, count in type_count.items():
+        html += f"<li>{shape}: {count}</li>"
+    html += "</ul><h3>Object Details:</h3><ol>"
+    for obj in detected:
+        html += f"<li>Shape: {obj['shape']}, Width: {obj['width_cm']} cm, Height: {obj['height_cm']} cm</li>"
+    html += "</ol><a href='/'>← Upload another image</a>"
+
+    return HTMLResponse(content=html)
