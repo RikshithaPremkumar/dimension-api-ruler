@@ -21,9 +21,7 @@ async def root():
     return {
         "message": "Upload an image with visible objects. Dimensions are returned in centimeters (cm) using estimated scaling."
     }
-
-# Constants
-PIXELS_PER_CM = 37.8  # Approximation assuming 96 DPI (96px = 2.54cm)
+PIXELS_PER_CM = 37.8  
 
 def classify_shape(approx):
     sides = len(approx)
